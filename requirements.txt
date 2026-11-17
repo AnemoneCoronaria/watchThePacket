@@ -1,0 +1,7 @@
+# Qt 기본 모듈만 쓰니까 가벼운 PySide6-Essentials 로 충분 (pyside6-uic/rcc/designer 도 들어있음)
+# 버전을 고정하지 않아야 우분투 버전/CPU에 맞는 걸 pip가 알아서 고름
+#  - Ubuntu 22.04 ARM(맥북 VirtualBox): 6.8까지만 설치 가능
+#  - Python 3.10~3.11 + PySide6 6.12: 프로그램 끌 때 크래시(none_dealloc) 나서 6.12 미만으로
+PySide6-Essentials>=6.5,<6.12; python_version < "3.12"
+PySide6-Essentials>=6.5; python_version >= "3.12"
+scapy>=2.5

@@ -341,7 +341,7 @@ class MainWindow(QWidget):
         tree.clear()                                     # 이전 클릭 내용 지우기
 
         # Wireshark처럼 Frame / Ethernet / IP / TCP / HTTP ... 순서로 (core/dissector.py)
-        nodes = build_tree(pkt, row + 1, self.analyzer.metas[row], self.t0, self.packets)
+        nodes = build_tree(pkt, row + 1, self.analyzer.metas[row], self.t0, self.packets, self.analyzer.metas)
         for node in nodes:
             tree.addTopLevelItem(self.make_tree_item(node))
         for i, node in enumerate(nodes):                 # 펼치기는 트리에 올린 다음에 해야 먹힘
@@ -472,6 +472,8 @@ class MainWindow(QWidget):
         # 응답이 와서 짝이 생겼으면 요청 쪽 Info도 다시 (ping: "reply in N")
         if meta.request_in is not None:
             self.refresh_info(meta.request_in)
+        for index in self.analyzer.reassembled_now:     # HTTP 조각들: "[TCP PDU reassembled in N]" 붙이기
+            self.refresh_info(index)
 
         # 지금 걸려 있는 표시 필터에 안 맞으면 숨기기
         if not self.is_shown(len(self.packets) - 1):

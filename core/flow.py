@@ -29,7 +29,7 @@ def build_flow_rows(indices, packets, metas, t0):
                 hosts.append(host)
 
         sport = dport = ""
-        proto = get_protocol(pkt)
+        proto = get_protocol(pkt, meta)
         info = make_info(pkt, proto, meta)
         if pkt.haslayer(TCP):
             tcp = pkt[TCP]

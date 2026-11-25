@@ -51,6 +51,11 @@ def payload_bytes(layer):
     return data
 
 
+def swap16(value):
+    # 2바이트 숫자 바이트 순서 뒤집기 (BE <-> LE). 1 -> 256
+    return ((value & 0xFF) << 8) | (value >> 8)
+
+
 def tcp_flag_names(tcp):
     # "SA" -> ["SYN", "ACK"] (Wireshark 순서: FIN SYN RST PSH ACK ...)
     letters = str(tcp.flags)
@@ -94,6 +99,30 @@ def parse_http(data):
         if sep:
             info["headers"].append((name.strip(), value.strip()))
     return info
+
+
+def http_complete(data):
+    # HTTP 메시지가 이 바이트 안에 다 들어있는지 (여러 패킷에 나뉘어 오면 False)
+    #   헤더 끝(빈 줄)이 있어야 하고, 본문은 Content-Length 만큼 / chunked면 마지막 0 덩어리까지
+    info = parse_http(data)
+    if info is None or not info["complete_head"]:
+        return False
+    status = info.get("status") or 0
+    if info["kind"] == "response" and (status in (204, 304) or 100 <= status < 200):
+        return True                             # 본문 없는 응답
+    if (http_header(info, "Transfer-Encoding") or "").lower() == "chunked":
+        return info["body"].endswith(b"0\r\n\r\n")
+    length = http_header(info, "Content-Length")
+    if length and length.strip().isdigit():
+        return len(info["body"]) >= int(length)
+    return True                                 # 길이 정보 없으면 여기까지를 한 메시지로 봄
+
+
+def http_data(pkt, meta=None):
+    # 이 패킷의 HTTP 메시지 바이트. 여러 조각을 이어 붙인 게 있으면 그걸 씀 (Wireshark 재조립처럼)
+    if meta is not None and getattr(meta, "http_data", None):
+        return meta.http_data
+    return payload_bytes(pkt[TCP])
 
 
 def http_header(info, name):
@@ -183,8 +212,15 @@ def dns_rdata(rr):
     return str(rdata).rstrip(".") if isinstance(rdata, str) else str(rdata)
 
 
-def get_protocol(pkt):
+def get_protocol(pkt, meta=None):
     # Protocol 칸에 쓸 이름. 위쪽 층(앱)부터 확인해야 함
+    # 재전송된 패킷은 내용이 HTTP여도 TCP로 (Wireshark랑 같음)
+    if meta is not None and getattr(meta, "repeat_data", False):
+        return "TCP"
+    if meta is not None and getattr(meta, "http_partial", False):
+        return "TCP"                            # HTTP 중간 조각 (마지막 조각에서 HTTP로 보임)
+    if meta is not None and getattr(meta, "http_data", None):
+        return "HTTP"
     if pkt.haslayer(TCP):
         data = payload_bytes(pkt[TCP])
         if is_http(data):
@@ -233,13 +269,18 @@ def _info_tcp(pkt, meta):
     if "ACK" in names:                      # Ack은 ACK 플래그 있을 때만 의미 있음
         ack = meta.rel_ack if meta and meta.rel_ack is not None else tcp.ack
         info += f" Ack={ack}"
-    info += f" Win={tcp.window} Len={len(payload_bytes(tcp))}"
+    win = meta.win_calc if meta and meta.win_calc is not None else tcp.window   # 배율 곱한 창 크기 (Wireshark처럼)
+    info += f" Win={win} Len={len(payload_bytes(tcp))}"
     options = tcp_option_text(tcp)
+    if meta is not None and getattr(meta, "reassembled_in", None) is not None:
+        options = (options + " " if options else "") + f"[TCP PDU reassembled in {meta.reassembled_in + 1}]"
+    if meta is not None and getattr(meta, "sack", None):      # Wireshark처럼 SACK 구간도
+        options = (options + " " if options else "") + " ".join(f"SLE={a} SRE={b}" for a, b in meta.sack)
     return f"{info} {options}" if options else info
 
 
-def _info_http(pkt):
-    http = parse_http(payload_bytes(pkt[TCP]))
+def _info_http(pkt, meta=None):
+    http = parse_http(http_data(pkt, meta))
     text = http["first_line"][:120]
     if http["kind"] == "response":          # 응답이면 내용 종류도 (Wireshark 처럼)
         ctype = http_header(http, "Content-Type")
@@ -258,7 +299,7 @@ def _info_tls(pkt):
             names.append(name)
         else:
             names.append(TLS_RECORDS[rec["type"]])
-    return ", ".join(dict.fromkeys(names)) or "Continuation Data"     # 같은 이름 겹치면 한 번만
+    return ", ".join(names) or "Continuation Data"     # 레코드마다 하나씩 (Wireshark처럼 겹쳐도 다 씀)
 
 
 def _info_dns(pkt):
@@ -276,7 +317,7 @@ def _info_dns(pkt):
     if dns.rcode:
         text += f" {DNS_RCODES.get(dns.rcode, 'Error')}"
     text += f" {qtype} {qname}"
-    for rr in dns_records(dns.an, dns.ancount)[:4] + dns_records(dns.ns, dns.nscount)[:1]:
+    for rr in dns_records(dns.an, dns.ancount) + dns_records(dns.ns, dns.nscount):     # 답 전부 (Wireshark처럼)
         text += f" {DNS_TYPES.get(rr.type, rr.type)} {dns_rdata(rr)}"
     return text
 
@@ -286,9 +327,12 @@ def _info_icmp(pkt, meta):
     name = ICMP_TYPES.get(icmp.type, f"Type {icmp.type}")
     if icmp.type in (0, 8):                     # ping이면 id, seq, ttl, 짝꿍 번호도
         ttl = pkt[IP].ttl if pkt.haslayer(IP) else "?"
-        name += f" id=0x{icmp.id:04x}, seq={icmp.seq}, ttl={ttl}"
-        if meta and icmp.type == 8 and meta.response_in is not None:
+        # seq는 Wireshark처럼 "BE/LE" 두 가지로 (예: seq=1/256). 앞에 띄어쓰기 두 칸도 Wireshark랑 같게
+        name += f"  id=0x{icmp.id:04x}, seq={icmp.seq}/{swap16(icmp.seq)}, ttl={ttl}"
+        if meta and icmp.type == 8 and meta.response_in is not None and meta.link_kind == "icmp":
             name += f" (reply in {meta.response_in + 1})"
+        elif meta and icmp.type == 8:
+            name += " (no response found!)"     # 응답이 안 옴 (응답 오면 화면에서 바로 바뀜)
         if meta and icmp.type == 0 and meta.request_in is not None:
             name += f" (request in {meta.request_in + 1})"
         return name
@@ -319,16 +363,31 @@ def _info_arp(pkt):
     return pkt.summary()
 
 
+def _tcp_prefix(meta):
+    # Wireshark가 Info 앞에 붙이는 꼬리표
+    if meta is None:
+        return ""
+    if getattr(meta, "port_reused", False):
+        return "[TCP Port numbers reused] "
+    if getattr(meta, "dup_ack", None) and meta.dup_ack[0] is not None:
+        return f"[TCP Dup ACK {meta.dup_ack[0] + 1}#{meta.dup_ack[1]}] "
+    for flag, text in (("spurious", "Spurious Retransmission"), ("fast_retransmission", "Fast Retransmission"),
+                       ("retransmission", "Retransmission"), ("out_of_order", "Out-Of-Order"), ("keepalive", "Keep-Alive")):
+        if getattr(meta, flag, False):
+            return f"[TCP {text}] "
+    return ""
+
+
 def make_info(pkt, proto, meta=None):
     # Info 칸에 쓸 한 줄. 프로토콜별로 필요한 값만 꺼내서 문장으로 만듦
     # 하다가 에러 나면 (이상하게 생긴 패킷) 그냥 scapy 요약으로 대신함
     try:
         if proto == "HTTP":
-            return _info_http(pkt)
+            return _tcp_prefix(meta) + _info_http(pkt, meta)
         if proto == "TLS":
             return _info_tls(pkt)
         if proto == "TCP":
-            return _info_tcp(pkt, meta)
+            return _tcp_prefix(meta) + _info_tcp(pkt, meta)
         if proto == "DNS":
             return _info_dns(pkt)
         if proto == "UDP":
@@ -376,7 +435,7 @@ def summarize(pkt, no, t0, meta=None):
     # pkt[X] = 그 부분만 꺼내기 (없는데 꺼내면 에러남)
     src, dst = endpoints(pkt)
 
-    proto = get_protocol(pkt)            # Protocol 칸
+    proto = get_protocol(pkt, meta)      # Protocol 칸
     length = len(pkt)                    # 전체 바이트 수
     info = make_info(pkt, proto, meta)   # Info 칸
 

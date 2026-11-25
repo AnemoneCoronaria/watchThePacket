@@ -26,8 +26,10 @@ Wireshark처럼 목록 · 상세 트리 · 흐름도 · 경로 그림으로 확�
 5. [표시 필터 문법](#표시-필터-문법)
 6. [문제 해결](#문제-해결)
 7. [확인한 환경](#확인한-환경)
-8. [폴더 구조](#폴더-구조)
-9. [개발자용](#개발자용)
+8. [Wireshark로 검증하기](#wireshark로-검증하기)
+9. [과제 제출용 zip](#과제-제출용-zip)
+10. [폴더 구조](#폴더-구조)
+11. [개발자용](#개발자용)
 
 ---
 
@@ -73,8 +75,8 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 
 | 스크립트 | 하는 일 |
 |---|---|
-| `install.sh` | (Ubuntu) Qt 창에 필요한 패키지 설치 → `.venv` 가상환경 만들고 `requirements.txt` 설치 |
-| `run.sh` | (Ubuntu) root가 화면에 창을 띄울 수 있게 잠깐 허락(`xhost`) → `sudo -E`로 실행 → 끝나면 허락 취소 |
+| `install.sh` | (Ubuntu) Qt 창에 필요한 패키지 설치 → `.venv` 가상환경 만들고 `requirements.txt` 설치 → 화면 파일(`ui_main.py`, `res_rc.py`) 만들기 |
+| `run.sh` | 화면 파일이 없거나 오래됐으면 다시 만들기 → (Ubuntu) root가 화면에 창을 띄울 수 있게 잠깐 허락(`xhost`) → `sudo -E`로 실행 → 끝나면 허락 취소 |
 
 직접 하고 싶으면 [개발자용](#개발자용) 참고.
 
@@ -86,8 +88,11 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 |---|---|
 | 캡처 | 인터페이스 선택(기본 / 루프백 / IP 있는 것 전부), 시작 · 정지 · 재시작, pcap 저장 · 열기 |
 | 패킷 목록 | No, Time, Source, Destination, Protocol, Length, Info + 프로토콜별 색 |
-| Info 칸 | Wireshark처럼: 상대 Seq/Ack (`Seq=0`), TCP 플래그/옵션, DNS `Standard query 0x005c A ...`, HTTP 첫 줄, TLS 단계(SNI), ping `(reply in N)` |
+| Info 칸 | Wireshark처럼: 상대 Seq/Ack (`Seq=0`), 배율 계산한 창 크기 (`Win=64256`), TCP 플래그/옵션/SACK, DNS `Standard query 0x005c A ...`, HTTP 첫 줄, TLS 단계(SNI), ping `id=0x0002, seq=1/256, ttl=64 (reply in 91)` |
+| TCP 분석 | `[TCP Retransmission]` `[TCP Out-Of-Order]` `[TCP Fast Retransmission]` `[TCP Spurious Retransmission]` `[TCP Keep-Alive]` `[TCP Dup ACK]` (Wireshark 판정 규칙 그대로), 여러 패킷에 나뉜 HTTP 재조립 |
 | 상세 트리 | Frame / Ethernet II / IP / TCP·UDP / DNS·HTTP·TLS·ICMP·ARP. 플래그 비트 분해, DNS Queries/Answers(TTL), HTTP 헤더·본문 |
+| ping 상세 | Identifier/Sequence (BE·LE), `Checksum [correct]`, `Timestamp from icmp data`, Data, `[Response time]`, 터미널 ping 맨 끝과 같은 `[ping 통계: 5 packets transmitted, 5 received, 0% packet loss, rtt min/avg/max/mdev = ...]` |
+| traceroute 상세 | ICMP 에러 안에 들어있는 원래 IP / UDP 헤더 전체, 원래 요청(probe) 패킷 번호, `[traceroute 해석: TTL=2로 보낸 요청이 라우터 X에서 만료 -> 2번째 홉]` |
 | 요청 ↔ 응답 | DNS `[Response In]` `[Time]`, HTTP `[Request in frame]`, ping `[Response time]` |
 | TCP 연결 단계 | `[연결 단계: 연결 설정 (3-way handshake) 1/3: SYN]` / 데이터 송수신 / 연결 해제 |
 | 흐름도 | 호스트별 세로선 + 화살표. TCP 연결 단계를 색칠. 필터 결과를 따라 바뀜 |
@@ -133,11 +138,13 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 | nslookup | `nslookup www.tukorea.ac.kr 210.93.48.196` | `udp && ip.addr==210.93.48.196` | 질의/응답 2개, 응답 상세의 Answers와 `[Request In]` `[Time]` |
 | curl | `curl -v http://www.tukorea.ac.kr` | `tcp && ip.addr==210.93.48.59` | 흐름도: 3-way handshake → GET/307 → 연결 해제. 우클릭 → 스트림 따라가기 |
 | netstat | curl 직후 `netstat -an \| grep 210.93.48.59` | `tcp.phase==teardown` | `TIME_WAIT` ↔ 흐름도에서 내 쪽이 마지막 ACK를 보낸 것 |
-| ping | `ping -c 4 210.93.48.59` | `icmp` | request `(reply in N)`, reply 상세의 `[Response time]` |
-| traceroute | `traceroute -q 2 8.8.8.8` | `(udp.dstport>=33434 && udp.dstport<=33534) \|\| icmp.type==11 \|\| icmp.type==3` | **경로** 버튼 그림, `Time-to-live exceeded` 상세의 `[traceroute 해석]` |
+| ping | `ping -c 5 www.tukorea.ac.kr` | `ip.addr==210.93.48.59 && icmp` | 요청/응답 10개, `seq=1/256`, `(reply in N)`, 응답 상세의 `[Response time]`과 `[ping 통계]` ↔ 터미널 맨 끝 통계 |
+| traceroute | `traceroute computer.tukorea.ac.kr` | `ip.addr==210.93.57.50`, `ip.addr==210.93.57.50 && udp.port==33434` | UDP(TTL 1,2,3…) ↔ 라우터의 `Time-to-live exceeded`, 목적지의 `Port unreachable`. **경로** 버튼 그림, 상세의 `[traceroute 해석]` |
 
 - curl의 IP는 출력 맨 위 `Trying 210.93.48.59:80...`에서 확인 (바뀔 수 있음)
 - Ubuntu `nslookup`의 기본 서버 `127.0.0.53`은 루프백이라, 위처럼 서버를 지정하거나 인터페이스를 "IP 있는 것 전부"로 고른다
+- 3차 설명서처럼 `ip.addr==210.93.57.50` 필터에 **라우터가 보낸 응답도 같이 걸린다**. ICMP 에러 안에 내가 보낸 IP·UDP 헤더가 들어있기 때문 (Wireshark와 같음). `udp.port==33434`로 요청과 그 응답 한 쌍만 볼 수 있다
+- 학교 서버(`www.tukorea.ac.kr`, `computer.tukorea.ac.kr`)는 학교 밖에서는 ping/traceroute/curl 응답이 막힐 수 있다. 그럴 땐 `8.8.8.8`, `http://example.com`으로 연습
 - traceroute를 `-m 8`처럼 홉 수를 제한하면 목적지 전에 끝나서 경로 그림이 "아직 안 닿음"으로 나온다 (정상)
 - Ubuntu에 traceroute가 없으면: `sudo apt install -y traceroute`
 
@@ -155,6 +162,7 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 | 포트 | `port 80` `tcp.port==443` `tcp.srcport` `tcp.dstport` `udp.port` `udp.dstport>=33434` |
 | TCP | `tcp.flags.syn==1` `tcp.flags.ack` `tcp.flags.fin` `tcp.flags.reset` `tcp.flags.push` `tcp.len>0` `tcp.seq` `tcp.stream==0` |
 | TCP 연결 단계 (전용) | `tcp.phase==handshake` `tcp.phase==data` `tcp.phase==teardown` |
+| TCP 분석 | `tcp.analysis.retransmission` `tcp.analysis.out_of_order` `tcp.analysis.fast_retransmission` `tcp.analysis.spurious_retransmission` `tcp.analysis.keep_alive` |
 | IP / ICMP | `ip.ttl==1` `ip.proto` `icmp.type==11` `icmp.code==3` `icmp.seq` |
 | DNS / HTTP | `dns.qry.name contains "tukorea"` `dns.qry.type==28` `dns.a` `dns.flags.response==1` `http.request.method=="GET"` `http.host` `http.response.code==307` |
 | 기타 | `frame.len>100` `frame.number<=50` `udp.stream` |
@@ -164,7 +172,8 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 - 필드 이름만 쓰면 "그 필드가 있는 패킷" (`tcp.flags.syn` = TCP 전부). 값을 보려면 `==1`까지
 - `!=`는 Wireshark처럼 "전부 아니어야" 참 (`ip.addr!=1.1.1.1` = 출발·도착 둘 다 1.1.1.1이 아님)
 - 글자 비교는 대소문자 구분 안 함
-- `http`, `tls`는 내용을 보고 판단해서, 연결 중간 조각은 `tcp`로만 보일 수 있음
+- `ip.*`, `udp.*`, `tcp.*` 필드는 ICMP 에러 안에 들어있는 원래 헤더도 본다 (Wireshark와 같음. traceroute 분석에 필요)
+- `tls`는 내용을 보고 판단해서, 연결 중간 조각은 `tcp`로만 보일 수 있음 (HTTP는 여러 조각을 이어 붙여서 판단)
 
 ---
 
@@ -219,6 +228,46 @@ Docker 컨테이너 안에서 **Ubuntu 데스크톱(GNOME)과 같은 화면 관�
 
 ---
 
+## Wireshark로 검증하기
+
+3차 과제 설명서: **"개발 프로그램의 정상 동작 여부는 wireshark를 통해 검증 필수"**
+
+같은 pcap 파일을 우리 프로그램과 Wireshark(tshark)로 각각 해석해서 패킷마다 비교하는 도구가 있다.
+
+```bash
+# 1. 우리 프로그램으로 캡처 -> 💾 저장 (capture.pcap)
+# 2. tshark 설치 (Ubuntu) / macOS는 Wireshark 앱에 들어있음
+sudo apt install -y tshark
+# 3. 비교 (필터도 같이 비교하려면 --filter 추가)
+.venv/bin/python tools/verify_with_wireshark.py capture.pcap --filter "ip.addr==210.93.48.59 && icmp" --filter "ip.addr==210.93.57.50"
+```
+
+비교하는 것: Protocol / Info 칸, ping 필드(id, seq, 짝꿍, 응답 시간, 체크섬), DNS 필드(ID, 짝꿍, 응답 시간), TCP 필드(스트림, 상대 Seq/Ack, 창 크기, 길이), 표시 필터 결과
+
+실제 캡처로 확인한 결과 (nslookup · curl · ping · traceroute + 배경 트래픽):
+
+| 환경 | Wireshark | 패킷 | 결과 (443 암호화 트래픽 제외) |
+|---|---|---|---|
+| macOS | 4.6.9 | 11,961 | Protocol · Info 208/208, DNS 103/103, TCP 11,408/11,408, 재전송 판정 134/134, 필터 10/10 같음 |
+| macOS | 4.6.9 | 310 | 전부 같음 (HTTPS 포함 310/310) |
+| Ubuntu 24.04 | 4.2.2 | 171 | 전부 같음 |
+| Ubuntu 22.04 | 3.6.2 | 169 | 2개만 표기 차이: 3.6은 `SACK_PERM=1`, `[TCP segment of a reassembled PDU]` / 우리는 4.x 표기 `SACK_PERM`, `[TCP PDU reassembled in N]` |
+
+알려진 차이 (과제 범위 밖):
+- 443번(HTTPS, QUIC) 암호화 트래픽은 Wireshark가 여러 패킷을 재조립해서 `TLSv1.3`, `QUIC`로 보여주는데, 우리는 TLS 재조립과 QUIC 해석을 안 함
+
+---
+
+## 과제 제출용 zip
+
+```bash
+tools/make_submission_zip.sh
+```
+
+`컴네-3차과제-2조-프로그램.zip`이 만들어진다. git에 올라간 파일만 넣어서 `.venv`, `__pycache__`, `ui_main.py`, `res_rc.py`(빌드 결과물), `.pcap`은 자동으로 빠진다.
+
+---
+
 ## 폴더 구조
 
 ```
@@ -226,9 +275,12 @@ watchThePacket/
 ├── install.sh / run.sh   # 설치 / 실행 스크립트
 ├── main.py               # 진입점
 ├── main.ui / res.qrc     # Qt Designer 원본
-├── ui_main.py, res_rc.py # 자동 생성 (직접 고치지 않음)
+├── ui_main.py, res_rc.py # install.sh / run.sh 가 만듦 (저장소에는 없음)
 ├── icons/                # 툴바 아이콘 (SVG)
 ├── docs/images/          # README 스크린샷
+├── tools/
+│   ├── verify_with_wireshark.py  # Wireshark(tshark)와 비교 검증
+│   └── make_submission_zip.sh    # 과제 제출용 zip
 ├── gui/
 │   ├── main_window.py    # 창: 버튼, 표, 트리, hex 연결
 │   ├── flow_graph.py     # 흐름도 창
@@ -275,10 +327,14 @@ xhost +SI:localuser:root && sudo -E .venv/bin/python main.py
 
 ### 화면(.ui) / 아이콘 수정 후
 
+`./run.sh`가 알아서 다시 만든다. 직접 하려면:
+
 ```bash
 .venv/bin/pyside6-rcc res.qrc -o res_rc.py
 .venv/bin/pyside6-uic main.ui -o ui_main.py
 ```
+
+`ui_main.py`, `res_rc.py`는 빌드 결과물이라 git에 올리지 않는다 (과제 설명서: 빌드 중 생기는 파일은 제출 zip에서 제외).
 
 ### 창 없이 로직만 테스트
 

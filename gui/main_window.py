@@ -3,9 +3,9 @@ from PySide6.QtWidgets import QWidget
 from ui_main import Ui_MiniWireShark
 from PySide6.QtWidgets import QAbstractItemView
 from PySide6.QtGui import QFont, QBrush, QColor, QFontDatabase
-from PySide6.QtCore import Qt, Slot, QTimer
+from PySide6.QtCore import Qt, Slot, QTimer, QPoint
 import time
-from PySide6.QtWidgets import QTableWidgetItem, QTreeWidgetItem, QFileDialog, QMessageBox, QPlainTextEdit, QMenu
+from PySide6.QtWidgets import QTableWidgetItem, QTreeWidgetItem, QFileDialog, QMessageBox, QPlainTextEdit, QMenu, QToolTip
 
 from core.sniffer import Sniffer
 from core.packet_parser import summarize, hex_dump
@@ -196,7 +196,7 @@ class MainWindow(QWidget):
         if was_running:
             got = len(self.packets) - self.capture_start_count
             print(f"[캡처 정지] {self.capture_name}에서 패킷 {got}개", flush=True)
-            self.setWindowTitle(f"MiniWireShark · 정지 · 패킷 {len(self.packets)}개")
+            self.setWindowTitle(f"MiniWireShark · 정지 · 패킷 {len(self.packets)}개{self.shown_text()}")
 
 
     # 메인 창 X 누르면 (Ctrl+C 도 여기로 옴)
@@ -216,7 +216,22 @@ class MainWindow(QWidget):
         if got == 0 and time.time() - self.capture_since > 5:
             self.setWindowTitle(f"MiniWireShark · {self.capture_name}: 5초 넘게 패킷이 안 들어와요 (인터페이스 확인)")
         else:
-            self.setWindowTitle(f"MiniWireShark · {self.capture_name}에서 캡처 중 · 패킷 {len(self.packets)}개")
+            self.setWindowTitle(f"MiniWireShark · {self.capture_name}에서 캡처 중 · 패킷 {len(self.packets)}개{self.shown_text()}")
+
+
+    # 표시 필터가 걸려 있으면 창 제목 뒤에 " · 표시 3개" 처럼 (필터가 먹었는지 바로 보이게. Wireshark 아래 상태줄의 Displayed)
+    def shown_text(self):
+        if self.display_pred is None:
+            return ""
+        table = self.ui.showPacketTable
+        shown = sum(1 for row in range(len(self.packets)) if not table.isRowHidden(row))
+        return f" · 필터로 {shown}개 표시"
+
+
+    # 캡처 중이 아닐 때 창 제목 (파일 열었을 때, 필터 바꿨을 때)
+    def update_idle_title(self):
+        if not self.status_timer.isActive():
+            self.setWindowTitle(f"MiniWireShark · 패킷 {len(self.packets)}개{self.shown_text()}")
 
 
     # 표, 트리, hex, 번호 전부 처음 상태로 (재시작이랑 파일 열기에서 같이 씀)
@@ -231,10 +246,29 @@ class MainWindow(QWidget):
         self.analyzer.reset()           # 관계 정보도 처음부터
 
 
-    # 필터 칸 글자가 바뀔 때: 완전히 비면 바로 필터 해제
+    # 필터 칸 글자가 바뀔 때
+    #   완전히 비면 바로 필터 해제
+    #   아니면 Wireshark처럼 칸 색으로 문법 미리 알려주기 (초록 = 맞음 -> Enter 치면 적용 / 빨강 = 틀림)
     def on_filter_changed(self, text):
         if not text.strip():
             self.apply_filter()
+            return
+        try:
+            parse_filter(text)
+            self.mark_filter_box(None)
+        except ValueError as e:
+            self.mark_filter_box(str(e))
+
+
+    # 필터 칸 색칠. error 가 None 이면 초록, 글자가 있으면 빨강 + 이유 툴팁
+    def mark_filter_box(self, error):
+        box = self.ui.inputFilter
+        if error is None:
+            box.setStyleSheet("background-color: #d7f5d7; color: black;")
+            box.setToolTip("Enter를 치면 적용돼요")
+        else:
+            box.setStyleSheet("background-color: #ffd6d6; color: black;")
+            box.setToolTip(error)
 
 
     # 표시 필터 적용 (Enter 쳤을 때)
@@ -245,13 +279,17 @@ class MainWindow(QWidget):
         try:
             pred = parse_filter(box.text())
         except ValueError as e:
-            # 문법이 틀리면 칸을 빨갛게 하고 이유를 툴팁으로. 이전 필터는 그대로 둠
-            box.setStyleSheet("background-color: #ffd6d6; color: black;")
-            box.setToolTip(str(e))
+            # 문법이 틀리면 칸을 빨갛게 하고, 이유를 칸 바로 아래에 바로 띄움 (마우스 안 올려도 보이게)
+            # 이전 필터는 그대로 둠
+            self.mark_filter_box(str(e))
+            QToolTip.showText(box.mapToGlobal(QPoint(0, box.height())), f"필터 적용 안 됨: {e}", box)
             return
 
-        box.setStyleSheet("")                   # 정상이면 원래 모양으로
-        box.setToolTip("")
+        if pred is None:                        # 칸 비움 = 필터 해제 -> 원래 모양
+            box.setStyleSheet("")
+            box.setToolTip("")
+        else:
+            self.mark_filter_box(None)
         self.display_pred = pred
 
         table = self.ui.showPacketTable
@@ -259,6 +297,8 @@ class MainWindow(QWidget):
         for row in range(len(self.packets)):
             table.setRowHidden(row, not self.is_shown(row))
         table.setUpdatesEnabled(True)
+
+        self.update_idle_title()                # 캡처 중이면 0.5초마다 제목이 알아서 바뀜
 
         # 흐름도 창이 "필터 결과" 보기로 열려 있으면 같이 바꿔줌
         if self.flow_dialog is not None and self.flow_dialog.isVisible() and self.flow_dialog.scope.currentIndex() == 0:
@@ -319,6 +359,7 @@ class MainWindow(QWidget):
         for pkt in packets:
             self.on_packet(pkt)                 # 캡처할 때랑 똑같이 표에 추가
         table.setUpdatesEnabled(True)
+        self.update_idle_title()
         
         
     def add_row(self, values):

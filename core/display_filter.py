@@ -1,5 +1,6 @@
 import ipaddress
 import re
+import unicodedata
 
 from scapy.all import Ether, Dot3, IP, IPv6, TCP, UDP, ICMP, ARP, DNS
 from scapy.layers.inet import IPerror, UDPerror, TCPerror, ICMPerror
@@ -354,8 +355,13 @@ class _Parser:
         raise ValueError(f"모르는 단어예요: {tok}")
 
 
+# 복사해서 붙여넣을 때 같이 딸려오는 안 보이는 글자들 (폭 없는 공백 등)
+INVISIBLE = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"), None)
+
+
 def parse_filter(text):
-    text = text.strip()
+    # 전각 글자(＆＆, ＝＝)는 보통 글자로, 안 보이는 글자는 지우고 시작
+    text = unicodedata.normalize("NFKC", text).translate(INVISIBLE).strip()
     if not text:
         return None                     # 필터 없음
 

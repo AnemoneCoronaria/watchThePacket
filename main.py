@@ -1,4 +1,6 @@
+import signal
 import sys
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 try:
@@ -15,6 +17,16 @@ def main():
 
     window = MainWindow()
     window.show()
+
+    # 터미널에서 Ctrl+C 눌러도 안 꺼지던 문제
+    #   Qt가 돌고 있는 동안엔 파이썬이 Ctrl+C를 확인할 틈이 없어서 그냥 무시됨
+    #   -> Ctrl+C(또는 kill) 오면 창 X 누른 거랑 똑같이 닫기
+    #   -> 0.2초마다 타이머로 파이썬한테 잠깐씩 차례를 줘야 이걸 알아챔
+    signal.signal(signal.SIGINT, lambda *_: window.close())
+    signal.signal(signal.SIGTERM, lambda *_: window.close())
+    wake = QTimer()
+    wake.timeout.connect(lambda: None)
+    wake.start(200)
 
     sys.exit(app.exec())
 

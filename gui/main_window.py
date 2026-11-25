@@ -199,6 +199,17 @@ class MainWindow(QWidget):
             self.setWindowTitle(f"MiniWireShark · 정지 · 패킷 {len(self.packets)}개")
 
 
+    # 메인 창 X 누르면 (Ctrl+C 도 여기로 옴)
+    # 캡처 스레드 먼저 멈추고 작은 창들(흐름도, 스트림, 경로)도 같이 닫고 끝냄
+    # 안 멈추면 프로그램 꺼지는 도중에도 스레드가 패킷을 계속 보내서 가끔 이상하게 죽을 수 있음
+    def closeEvent(self, event):
+        self.stop_capture()
+        for dialog in (self.flow_dialog, self.follow_dialog, self.route_dialog):
+            if dialog is not None:
+                dialog.close()
+        event.accept()
+
+
     # 창 제목에 캡처 상태 보여주기 (캡처 중 0.5초마다)
     def update_status(self):
         got = len(self.packets) - self.capture_start_count

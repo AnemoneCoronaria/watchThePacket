@@ -2,8 +2,9 @@ import ipaddress
 import re
 
 from scapy.all import Ether, Dot3, IP, IPv6, TCP, UDP, ICMP, ARP, DNS
+from scapy.layers.inet import IPerror, UDPerror, TCPerror, ICMPerror
 
-from core.packet_parser import get_protocol, payload_bytes, parse_http, http_header, dns_records, dns_name, dns_rdata
+from core.packet_parser import get_protocol, payload_bytes, parse_http, http_data, http_header, dns_records, dns_name, dns_rdata
 
 # 표시 필터: 이미 잡은 패킷 중에 "보여줄 것만" 고르는 글자 해석기
 # Qt는 몰라도 됨 (터미널에서 테스트 가능)
@@ -38,13 +39,24 @@ OPS = {"==", "!=", ">", "<", ">=", "<=", "contains"}
 TOKEN_RE = re.compile(r'"[^"]*"|\(|\)|==|!=|>=|<=|>|<|&&|\|\||!|[^\s()=!&|<>"]+|\S')
 
 
+# ICMP 에러(traceroute 응답 등) 안에 들어있는 "원래 보낸 패킷"의 헤더도 같이 봄 (Wireshark랑 같음)
+#   예) 라우터가 보낸 Time-to-live exceeded 안에는 내가 보낸 IP(목적지 주소)와 UDP(포트)가 들어있어서
+#       ip.addr==목적지, udp.port==33434 필터에 같이 걸림 (2차/3차 설명서 화면이 이렇게 나옴)
+INNER = {IP: IPerror, UDP: UDPerror, TCP: TCPerror, ICMP: ICMPerror}
+
+
+def _layers(pkt, cls):
+    found = [pkt[cls]] if pkt.haslayer(cls) else []
+    inner = INNER.get(cls)
+    if inner is not None and pkt.haslayer(inner):
+        found.append(pkt[inner])
+    return found
+
+
 # ---- 필드 값 꺼내는 함수들: (pkt, meta) -> 값 리스트 (없으면 빈 리스트) ----
 def _layer_vals(cls, *attrs):
     def get(pkt, meta):
-        if not pkt.haslayer(cls):
-            return []
-        layer = pkt[cls]
-        return [getattr(layer, a) for a in attrs]
+        return [getattr(layer, a) for layer in _layers(pkt, cls) for a in attrs]
     return get
 
 
@@ -79,7 +91,9 @@ def _http(fn):
     def get(pkt, meta):
         if not pkt.haslayer(TCP):
             return []
-        info = parse_http(payload_bytes(pkt[TCP]))
+        if meta is not None and (meta.http_partial or meta.repeat_data):
+            return []
+        info = parse_http(http_data(pkt, meta))
         value = fn(info) if info else None
         return [value] if value is not None else []
     return get
@@ -128,6 +142,12 @@ FIELDS = {
     "tcp.window_size": (_layer_vals(TCP, "window"), "int"),
     "tcp.stream": (_stream("tcp"), "int"),
     # 우리 프로그램 전용: 연결 단계 (handshake / data / teardown) -> tcp.phase==handshake
+    # Wireshark 전문가 분석 필드들 (재전송 종류)
+    "tcp.analysis.retransmission": (lambda pkt, meta: [1] if meta is not None and (meta.retransmission or meta.fast_retransmission or meta.spurious) else [], "int"),
+    "tcp.analysis.fast_retransmission": (lambda pkt, meta: [1] if meta is not None and meta.fast_retransmission else [], "int"),
+    "tcp.analysis.spurious_retransmission": (lambda pkt, meta: [1] if meta is not None and meta.spurious else [], "int"),
+    "tcp.analysis.out_of_order": (lambda pkt, meta: [1] if meta is not None and meta.out_of_order else [], "int"),
+    "tcp.analysis.keep_alive": (lambda pkt, meta: [1] if meta is not None and meta.keepalive else [], "int"),
     "tcp.phase": (lambda pkt, meta: [meta.phase] if meta and meta.phase else [], "str"),
     "tcp.flags.syn": (_tcp_flag("S"), "int"),
     "tcp.flags.ack": (_tcp_flag("A"), "int"),
@@ -309,12 +329,12 @@ class _Parser:
             test = _make_test(op, self.take_value(), kind)
             return _field_pred(getter, op, test)
 
-        if word in LAYER_WORDS:         # tcp, udp, ip ...
+        if word in LAYER_WORDS:         # tcp, udp, ip ... (ICMP 에러 안에 들어있는 것도 포함, Wireshark랑 같음)
             layer = LAYER_WORDS[word]
-            return lambda pkt, meta: pkt.haslayer(layer)
+            return lambda pkt, meta: bool(_layers(pkt, layer))
 
         if word in APP_WORDS:           # dns, http, tls ...
-            return lambda pkt, meta: get_protocol(pkt).lower() == word
+            return lambda pkt, meta: get_protocol(pkt, meta).lower() == word
 
         if word == "port":              # port 80 (tcp든 udp든)
             test = _make_test("==", self.take_value(), "int")

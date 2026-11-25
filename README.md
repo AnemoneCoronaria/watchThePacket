@@ -13,23 +13,64 @@ Wireshark처럼 목록 · 상세 트리 · 흐름도 · 경로 그림으로 확�
 ![scapy](https://img.shields.io/badge/scapy-2.5%2B-orange)
 ![Platform](https://img.shields.io/badge/Ubuntu%2022.04%20%7C%2024.04%20%7C%20macOS-supported-lightgrey)
 
-![메인 화면](docs/images/main.png)
+<p align="center">
+  <img src="docs/images/ubuntu/main.png" alt="Ubuntu 22.04에서 ping 요청 패킷을 선택한 메인 화면" width="100%">
+  <br><sub>Ubuntu 22.04 · ping 요청을 선택한 화면 (ICMP 상세: Identifier/Sequence BE·LE, Timestamp from icmp data, Response frame, ping 통계)</sub>
+</p>
 
 ---
 
 ## 목차
 
-1. [빠른 시작](#빠른-시작)
-2. [주요 기능](#주요-기능)
-3. [화면 사용법](#화면-사용법)
-4. [과제 실습 가이드 (명령어별)](#과제-실습-가이드-명령어별)
-5. [표시 필터 문법](#표시-필터-문법)
-6. [문제 해결](#문제-해결)
-7. [확인한 환경](#확인한-환경)
-8. [Wireshark로 검증하기](#wireshark로-검증하기)
-9. [과제 제출용 zip](#과제-제출용-zip)
-10. [폴더 구조](#폴더-구조)
-11. [개발자용](#개발자용)
+1. [스크린샷 (Ubuntu · macOS)](#스크린샷-ubuntu--macos)
+2. [빠른 시작](#빠른-시작)
+3. [주요 기능](#주요-기능)
+4. [화면 사용법](#화면-사용법)
+5. [과제 실습 가이드 (명령어별)](#과제-실습-가이드-명령어별)
+6. [표시 필터 문법](#표시-필터-문법)
+7. [문제 해결](#문제-해결)
+8. [확인한 환경](#확인한-환경)
+9. [Wireshark로 검증하기](#wireshark로-검증하기)
+10. [과제 제출용 zip](#과제-제출용-zip)
+11. [폴더 구조](#폴더-구조)
+12. [개발자용](#개발자용)
+
+---
+
+## 스크린샷 (Ubuntu · macOS)
+
+같은 코드가 두 운영체제에서 똑같이 동작한다. 왼쪽은 실습 환경인 **Ubuntu 22.04**(Qt 기본 Fusion 스타일), 오른쪽은 **macOS**(다크 모드)다.
+
+<table>
+<tr><th width="50%">Ubuntu 22.04</th><th width="50%">macOS</th></tr>
+<tr>
+<td><img src="docs/images/ubuntu/main.png" alt="Ubuntu 메인 화면"></td>
+<td><img src="docs/images/macos/main.png" alt="macOS 메인 화면"></td>
+</tr>
+<tr><td colspan="2" align="center"><b>메인 화면</b> · 패킷 목록(프로토콜별 색) · 상세 트리 · hex. ping 요청을 고르면 짝꿍 응답 번호와 터미널 ping 통계까지 보인다</td></tr>
+<tr>
+<td><img src="docs/images/ubuntu/traceroute.png" alt="Ubuntu traceroute 상세"></td>
+<td><img src="docs/images/macos/traceroute.png" alt="macOS traceroute 상세"></td>
+</tr>
+<tr><td colspan="2" align="center"><b>traceroute 상세</b> · 필터 <code>ip.addr==8.8.8.8 &amp;&amp; udp</code> — 라우터의 <code>Time-to-live exceeded</code> 안에 든 원래 UDP 헤더, 원래 요청 번호, <code>[traceroute 해석]</code></td></tr>
+<tr>
+<td><img src="docs/images/ubuntu/route.png" alt="Ubuntu traceroute 경로"></td>
+<td><img src="docs/images/macos/route.png" alt="macOS traceroute 경로"></td>
+</tr>
+<tr><td colspan="2" align="center"><b>traceroute 경로</b> · <code>traceroute 8.8.8.8</code> — 내 PC → 라우터 → 목적지. 응답 없는 홉(<code>* * *</code>)은 점선, 홉마다 평균 응답 시간</td></tr>
+<tr>
+<td><img src="docs/images/ubuntu/flow.png" alt="Ubuntu 흐름도"></td>
+<td><img src="docs/images/macos/flow.png" alt="macOS 흐름도"></td>
+</tr>
+<tr><td colspan="2" align="center"><b>흐름도</b> · <code>curl</code> 한 번의 TCP 연결: 3-way handshake → HTTP 요청/응답 → 연결 해제를 단계별로 색칠</td></tr>
+<tr>
+<td><img src="docs/images/ubuntu/follow.png" alt="Ubuntu 스트림 따라가기"></td>
+<td><img src="docs/images/macos/follow.png" alt="macOS 스트림 따라가기"></td>
+</tr>
+<tr><td colspan="2" align="center"><b>스트림 따라가기</b> · 표에서 우클릭 → Follow TCP Stream. 요청은 빨강, 응답은 파랑</td></tr>
+</table>
+
+<sub>스크린샷은 실제 명령어(<code>nslookup</code>, <code>curl</code>, <code>ping -c 4 8.8.8.8</code>, <code>traceroute 8.8.8.8</code>)와 같은 모양으로 만든 예시 세션이다. 공개 저장소라 개인 IP와 통신사 라우터 주소가 나오지 않게 내 PC는 <code>192.168.0.123</code>, 중간 라우터는 사설 대역으로 바꿨다.</sub>
 
 ---
 
@@ -91,7 +132,7 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 | Info 칸 | Wireshark처럼: 상대 Seq/Ack (`Seq=0`), 배율 계산한 창 크기 (`Win=64256`), TCP 플래그/옵션/SACK, DNS `Standard query 0x005c A ...`, HTTP 첫 줄, TLS 단계(SNI), ping `id=0x0002, seq=1/256, ttl=64 (reply in 91)` |
 | TCP 분석 | `[TCP Retransmission]` `[TCP Out-Of-Order]` `[TCP Fast Retransmission]` `[TCP Spurious Retransmission]` `[TCP Keep-Alive]` `[TCP Dup ACK]` (Wireshark 판정 규칙 그대로), 여러 패킷에 나뉜 HTTP 재조립 |
 | 상세 트리 | Frame / Ethernet II / IP / TCP·UDP / DNS·HTTP·TLS·ICMP·ARP. 플래그 비트 분해, DNS Queries/Answers(TTL), HTTP 헤더·본문 |
-| ping 상세 | Identifier/Sequence (BE·LE), `Checksum [correct]`, `Timestamp from icmp data`, Data, `[Response time]`, 터미널 ping 맨 끝과 같은 `[ping 통계: 5 packets transmitted, 5 received, 0% packet loss, rtt min/avg/max/mdev = ...]` |
+| ping 상세 | Identifier/Sequence (BE·LE), `Checksum [correct]`, `Timestamp from icmp data`(Ubuntu · macOS ping 둘 다 마이크로초까지), Data, `[Response time]`, 터미널 ping 맨 끝과 같은 `[ping 통계: 4 packets transmitted, 4 received, 0% packet loss, rtt min/avg/max/mdev = ...]` |
 | traceroute 상세 | ICMP 에러 안에 들어있는 원래 IP / UDP 헤더 전체, 원래 요청(probe) 패킷 번호, `[traceroute 해석: TTL=2로 보낸 요청이 라우터 X에서 만료 -> 2번째 홉]` |
 | 요청 ↔ 응답 | DNS `[Response In]` `[Time]`, HTTP `[Request in frame]`, ping `[Response time]` |
 | TCP 연결 단계 | `[연결 단계: 연결 설정 (3-way handshake) 1/3: SYN]` / 데이터 송수신 / 연결 해제 |
@@ -99,12 +140,6 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 | 스트림 따라가기 | 표에서 우클릭 → Follow TCP/UDP Stream. 요청은 빨강, 응답은 파랑 (ASCII / UTF-8 / Hex) |
 | traceroute 경로 | 내 PC → 라우터들 → 목적지를 그림으로. 응답 없는 홉, 여러 갈래 경로, 도착 여부 표시 |
 | 표시 필터 | `udp && ip.addr==210.93.48.196`, `tcp.flags.syn==1`, `dns.qry.name contains "tukorea"` 등 |
-
-| 흐름도 (3-way handshake → 데이터 → 연결 해제) | 스트림 따라가기 (HTTP) |
-|---|---|
-| ![흐름도](docs/images/flow.png) | ![스트림 따라가기](docs/images/follow.png) |
-
-![traceroute 경로](docs/images/route.png)
 
 ---
 
@@ -127,6 +162,12 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 - **표에서 우클릭**: TCP/UDP 스트림 따라가기, 이 연결만 흐름도, 필터 지우기
 - **화살표 키**로 행을 옮겨도 상세 트리 / hex가 바뀜
 
+### 끄기
+
+- 메인 창의 **X** 버튼: 캡처를 멈추고 흐름도 · 스트림 · 경로 창까지 한 번에 닫힌다
+- 흐름도 · 스트림 · 경로 창의 X는 그 창만 닫는다 (버튼을 다시 누르면 다시 열림)
+- `./run.sh`를 실행한 터미널에서 **Ctrl + C**: X를 누른 것과 똑같이 깔끔하게 꺼진다
+
 ---
 
 ## 과제 실습 가이드 (명령어별)
@@ -141,10 +182,19 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 | ping | `ping -c 5 www.tukorea.ac.kr` | `ip.addr==210.93.48.59 && icmp` | 요청/응답 10개, `seq=1/256`, `(reply in N)`, 응답 상세의 `[Response time]`과 `[ping 통계]` ↔ 터미널 맨 끝 통계 |
 | traceroute | `traceroute computer.tukorea.ac.kr` | `ip.addr==210.93.57.50`, `ip.addr==210.93.57.50 && udp.port==33434` | UDP(TTL 1,2,3…) ↔ 라우터의 `Time-to-live exceeded`, 목적지의 `Port unreachable`. **경로** 버튼 그림, 상세의 `[traceroute 해석]` |
 
+학교 밖에서 연습할 때 (응답이 잘 오는 대상):
+
+| 명령어 | 실행 예 | 필터 |
+|---|---|---|
+| ping | `ping -c 4 8.8.8.8` | `ip.addr==8.8.8.8 && icmp` |
+| traceroute | `traceroute 8.8.8.8` | `ip.addr==8.8.8.8 && udp` (요청 + 라우터 응답 전부), `ip.addr==8.8.8.8 && udp.port==33434` (첫 요청과 그 응답) |
+| curl | `curl -v http://example.com` | `tcp && http` |
+
 - curl의 IP는 출력 맨 위 `Trying 210.93.48.59:80...`에서 확인 (바뀔 수 있음)
 - Ubuntu `nslookup`의 기본 서버 `127.0.0.53`은 루프백이라, 위처럼 서버를 지정하거나 인터페이스를 "IP 있는 것 전부"로 고른다
 - 3차 설명서처럼 `ip.addr==210.93.57.50` 필터에 **라우터가 보낸 응답도 같이 걸린다**. ICMP 에러 안에 내가 보낸 IP·UDP 헤더가 들어있기 때문 (Wireshark와 같음). `udp.port==33434`로 요청과 그 응답 한 쌍만 볼 수 있다
-- 학교 서버(`www.tukorea.ac.kr`, `computer.tukorea.ac.kr`)는 학교 밖에서는 ping/traceroute/curl 응답이 막힐 수 있다. 그럴 땐 `8.8.8.8`, `http://example.com`으로 연습
+- 학교 서버(`www.tukorea.ac.kr`, `computer.tukorea.ac.kr`)는 학교 밖에서는 ping/traceroute/curl 응답이 막힐 수 있다. 그럴 땐 위 표처럼 `8.8.8.8`, `http://example.com`으로 연습
+- traceroute 중간에 `* * *`가 나오는 홉은 그 라우터가 응답을 안 보낸 것이다. 경로 그림에서는 점선 동그라미로 나온다
 - traceroute를 `-m 8`처럼 홉 수를 제한하면 목적지 전에 끝나서 경로 그림이 "아직 안 닿음"으로 나온다 (정상)
 - Ubuntu에 traceroute가 없으면: `sudo apt install -y traceroute`
 
@@ -188,6 +238,7 @@ git clone https://github.com/AnemoneCoronaria/watchThePacket.git && cd watchTheP
 | `./run.sh: Permission denied` | `chmod +x install.sh run.sh` 후 다시 |
 | `pip install` 중 `No matching distribution` | Python 3.10 미만 (Ubuntu 20.04 등). Ubuntu 22.04 이상 사용 |
 | 끌 때 `Fatal Python error: none_dealloc` | 예전 `requirements.txt`로 설치함. `rm -rf .venv && ./install.sh` |
+| 터미널에서 Ctrl + C를 눌러도 안 꺼짐 | 예전 코드. `git pull` 후 다시 실행 (지금은 X 버튼과 똑같이 꺼짐) |
 
 ### sudo 없이 실행하고 싶을 때 (선택)
 
@@ -226,6 +277,17 @@ Docker 컨테이너 안에서 **Ubuntu 데스크톱(GNOME)과 같은 화면 관�
 - sudo 없이 그냥 `python main.py`로 켜면 창은 뜨고, 캡처를 누르면 "관리자 권한이 필요해요" 안내가 나오는 것도 확인
 - 실제 VirtualBox VM 화면에서 손으로 해 본 결과는 아님
 
+### 끄기 동작
+
+Ubuntu 22.04 / 24.04에서 캡처 중 + 창 4개(메인 · 흐름도 · 스트림 · 경로)를 띄운 상태로 시험했다.
+
+| 끄는 방법 | 결과 |
+|---|---|
+| 메인 창 X | 0.2초 안에 창 4개 모두 닫히고 프로그램 종료 |
+| 작은 창 3개를 X로 먼저 닫고 메인 창 X | 작은 창만 닫히고 메인은 그대로 → 메인 X로 종료 |
+| `./run.sh` 터미널에서 Ctrl + C (일반 사용자 + sudo) | 0.3초 안에 종료, root 화면 허락(`xhost`)도 취소됨 |
+| Wayland 화면 | 모든 창에 제목 표시줄(X 버튼)이 있고, 닫는 동작도 X11과 같음 |
+
 ---
 
 ## Wireshark로 검증하기
@@ -242,16 +304,18 @@ sudo apt install -y tshark
 .venv/bin/python tools/verify_with_wireshark.py capture.pcap --filter "ip.addr==210.93.48.59 && icmp" --filter "ip.addr==210.93.57.50"
 ```
 
-비교하는 것: Protocol / Info 칸, ping 필드(id, seq, 짝꿍, 응답 시간, 체크섬), DNS 필드(ID, 짝꿍, 응답 시간), TCP 필드(스트림, 상대 Seq/Ack, 창 크기, 길이), 표시 필터 결과
+비교하는 것: Protocol / Info 칸, ping 필드(id, seq, 짝꿍, 응답 시간, 체크섬, 데이터 속 보낸 시각, Data 길이), DNS 필드(ID, 짝꿍, 응답 시간), TCP 필드(스트림, 상대 Seq/Ack, 창 크기, 길이), 표시 필터 결과
 
 실제 캡처로 확인한 결과 (nslookup · curl · ping · traceroute + 배경 트래픽):
 
 | 환경 | Wireshark | 패킷 | 결과 (443 암호화 트래픽 제외) |
 |---|---|---|---|
-| macOS | 4.6.9 | 11,961 | Protocol · Info 208/208, DNS 103/103, TCP 11,408/11,408, 재전송 판정 134/134, 필터 10/10 같음 |
+| macOS | 4.6.9 | 11,961 | Protocol · Info 208/208, ping 5/5, DNS 103/103, TCP 11,408/11,408, 재전송 판정 134/134, 필터 10/10 같음 |
 | macOS | 4.6.9 | 310 | 전부 같음 (HTTPS 포함 310/310) |
 | Ubuntu 24.04 | 4.2.2 | 171 | 전부 같음 |
 | Ubuntu 22.04 | 3.6.2 | 169 | 2개만 표기 차이: 3.6은 `SACK_PERM=1`, `[TCP segment of a reassembled PDU]` / 우리는 4.x 표기 `SACK_PERM`, `[TCP PDU reassembled in N]` |
+
+ping 데이터 속 보낸 시각은 OS마다 넣는 방식이 달라서(macOS: 4+4바이트 빅엔디언, 64비트 Ubuntu: 8+8바이트 리틀엔디언) 여러 형식을 따로 만들어 Wireshark와 비교했다: 10/10 같음.
 
 알려진 차이 (과제 범위 밖):
 - 443번(HTTPS, QUIC) 암호화 트래픽은 Wireshark가 여러 패킷을 재조립해서 `TLSv1.3`, `QUIC`로 보여주는데, 우리는 TLS 재조립과 QUIC 해석을 안 함
@@ -277,7 +341,7 @@ watchThePacket/
 ├── main.ui / res.qrc     # Qt Designer 원본
 ├── ui_main.py, res_rc.py # install.sh / run.sh 가 만듦 (저장소에는 없음)
 ├── icons/                # 툴바 아이콘 (SVG)
-├── docs/images/          # README 스크린샷
+├── docs/images/          # README 스크린샷 (ubuntu/, macos/)
 ├── tools/
 │   ├── verify_with_wireshark.py  # Wireshark(tshark)와 비교 검증
 │   └── make_submission_zip.sh    # 과제 제출용 zip

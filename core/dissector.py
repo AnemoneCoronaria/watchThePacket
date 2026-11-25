@@ -2,9 +2,11 @@ import time as _time
 
 from scapy.all import Ether, Dot3, IP, IPv6, TCP, UDP, ICMP, ARP, DNS, Raw, Padding, NoPayload
 from scapy.layers.inet import IPerror, UDPerror, TCPerror, ICMPerror
+from scapy.utils import checksum as inet_checksum
 
+from core.analyzer import ping_stats
 from core.packet_parser import (
-    build_detail, payload_bytes, tcp_flag_names, parse_http, http_header, tls_records,
+    build_detail, payload_bytes, tcp_flag_names, swap16, parse_http, http_header, tls_records,
     icmpv6_layer, dns_records, dns_name, dns_rdata,
     DNS_TYPES, DNS_RCODES, ICMP_TYPES, ICMP_CODES, TLS_RECORDS, TLS_HANDSHAKES, TLS_VERSIONS,
 )
@@ -37,6 +39,20 @@ DNS_TYPE_DESC = {"A": "Host Address", "AAAA": "IPv6 Address", "CNAME": "Canonica
                  "NS": "authoritative Name Server", "PTR": "domain name PoinTeR", "MX": "Mail eXchange",
                  "TXT": "Text strings", "SOA": "Start Of a zone of Authority", "SRV": "Server Selection",
                  "OPT": "EDNS0 option", "HTTPS": "HTTPS specific Resource Record", "SVCB": "General Purpose Service Binding"}
+
+
+ECN_NAMES = {0: "Not-ECT", 1: "ECT(1)", 2: "ECT(0)", 3: "CE"}
+
+
+def dscp_name(dscp):
+    # 0 -> CS0, 46 -> EF, 10 -> AF11 (Wireshark 표기)
+    if dscp == 46:
+        return "EF"
+    if dscp % 8 == 0:
+        return f"CS{dscp // 8}"
+    if dscp % 2 == 0 and 1 <= (dscp % 8) // 2 <= 3:
+        return f"AF{dscp // 8}{(dscp % 8) // 2}"
+    return str(dscp)
 
 
 def bitline(value, mask, width, label):
@@ -104,7 +120,7 @@ def _ipv4(layer):
     node = Node(f"Internet Protocol Version 4, Src: {layer.src}, Dst: {layer.dst}")
     node.add(bitline(layer.version << 4, 0xF0, 8, f"Version: {layer.version}"))
     node.add(bitline(layer.ihl, 0x0F, 8, f"Header Length: {layer.ihl * 4} bytes ({layer.ihl})"))
-    node.add(f"Differentiated Services Field: 0x{layer.tos:02x} (DSCP: {layer.tos >> 2}, ECN: {layer.tos & 3})")
+    node.add(f"Differentiated Services Field: 0x{layer.tos:02x} (DSCP: {dscp_name(layer.tos >> 2)}, ECN: {ECN_NAMES[layer.tos & 3]})")
     node.add(f"Total Length: {layer.len}")
     node.add(f"Identification: 0x{layer.id:04x} ({layer.id})")
     flags = int(layer.flags)
@@ -117,10 +133,11 @@ def _ipv4(layer):
     fnode.add(bitline(flags << 5, 0x80, 8, f"Reserved bit: {'Set' if flags & 4 else 'Not set'}"))
     fnode.add(bitline(flags << 5, 0x40, 8, f"Don't fragment: {'Set' if flags & 2 else 'Not set'}"))
     fnode.add(bitline(flags << 5, 0x20, 8, f"More fragments: {'Set' if flags & 1 else 'Not set'}"))
-    node.add(f"Fragment Offset: {layer.frag * 8}")
+    node.add(bitline(layer.frag, 0x1FFF, 16, f"Fragment Offset: {layer.frag * 8}"))
     node.add(f"Time to Live: {layer.ttl}")
     node.add(f"Protocol: {IP_PROTOCOLS.get(layer.proto, 'Unknown')} ({layer.proto})")
     node.add(f"Header Checksum: 0x{layer.chksum:04x} [validation disabled]")
+    node.add("[Header checksum status: Unverified]")
     node.add(f"Source Address: {layer.src}")
     node.add(f"Destination Address: {layer.dst}")
     return node
@@ -186,6 +203,10 @@ def _tcp(layer, meta):
     fnode.add(f"[TCP Flags: ····{short}]")
 
     node.add(f"Window: {layer.window}")
+    if meta and meta.win_calc is not None:
+        node.add(f"[Calculated window size: {meta.win_calc}]")
+    if meta and meta.win_scale is not None:
+        node.add(f"[Window size scaling factor: {meta.win_scale}]")
     node.add(f"Checksum: 0x{layer.chksum:04x} [unverified]")
     node.add(f"Urgent Pointer: {layer.urgptr}")
 
@@ -224,6 +245,7 @@ def _udp(layer, meta):
     node.add(f"Destination Port: {layer.dport}")
     node.add(f"Length: {layer.len}")
     node.add(f"Checksum: 0x{layer.chksum:04x} [unverified]")
+    node.add("[Checksum Status: Unverified]")
     if meta and meta.stream is not None:
         node.add(f"[Stream index: {meta.stream}]")
     node.add(f"UDP payload ({len(payload_bytes(layer))} bytes)")
@@ -400,16 +422,53 @@ def _data(data):
     return node
 
 
-def _icmp(pkt, layer, meta, packets):
+def _icmp_checksum_ok(layer):
+    # ICMP 체크섬 다시 계산해서 맞는지 (Wireshark의 [correct] / [Checksum Status: Good])
+    raw = bytes(layer)
+    if layer.haslayer(Padding):
+        raw = raw[: len(raw) - len(bytes(layer[Padding]))]
+    return inet_checksum(raw[:2] + b"\0\0" + raw[4:]) == layer.chksum
+
+
+def _icmp_timestamp(data, frame_time):
+    # 리눅스/맥 ping은 데이터 맨 앞 8바이트에 보낸 시각(초)을 넣음. 패킷 시각이랑 하루 안쪽이면 그걸로 봄
+    if len(data) >= 8:
+        sec = int.from_bytes(data[:8], "little")
+        if abs(frame_time - sec) < 86400:
+            return sec
+    return None
+
+
+def _ipv4_embedded(inner):
+    # ICMP 에러 안에 들어있는 원래 IP 헤더 (traceroute에서 보낸 그 패킷)
+    node = _ipv4(inner)
+    node.expanded = True
+    return node
+
+
+def _udp_embedded(u):
+    node = Node(f"User Datagram Protocol, Src Port: {u.sport}, Dst Port: {u.dport}", expanded=True)
+    node.add(f"Source Port: {u.sport}")
+    node.add(f"Destination Port: {u.dport}")
+    node.add(f"Length: {u.len}")
+    node.add(f"Checksum: 0x{u.chksum:04x} [unverified]")
+    return node
+
+
+def _icmp(pkt, layer, meta, packets, metas):
     node = Node("Internet Control Message Protocol", expanded=True)
     node.add(f"Type: {layer.type} ({ICMP_TYPES.get(layer.type, 'Unknown')})")
     code = ICMP_CODES.get(layer.type, {}).get(layer.code)
     node.add(f"Code: {layer.code}" + (f" ({code})" if code else ""))
-    node.add(f"Checksum: 0x{layer.chksum:04x} [unverified]")
+    ok = _icmp_checksum_ok(layer)
+    node.add(f"Checksum: 0x{layer.chksum:04x} [{'correct' if ok else 'incorrect'}]")
+    node.add(f"[Checksum Status: {'Good' if ok else 'Bad'}]")
 
     if layer.type in (0, 8):                    # ping
         node.add(f"Identifier (BE): {layer.id} (0x{layer.id:04x})")
+        node.add(f"Identifier (LE): {swap16(layer.id)} (0x{swap16(layer.id):04x})")
         node.add(f"Sequence Number (BE): {layer.seq} (0x{layer.seq:04x})")
+        node.add(f"Sequence Number (LE): {swap16(layer.seq)} (0x{swap16(layer.seq):04x})")
         if meta and meta.link_kind in ("icmp", "traceroute"):
             if layer.type == 8 and meta.response_in is not None:
                 label = "Response frame" if meta.link_kind == "icmp" else "[traceroute] 이 요청에 대한 ICMP 에러"
@@ -417,25 +476,42 @@ def _icmp(pkt, layer, meta, packets):
             if layer.type == 0 and meta.request_in is not None:
                 node.add(f"[Request frame: {meta.request_in + 1}]")
                 node.add(f"[Response time: {_ms(meta.rtt)}]")
+
         data = payload_bytes(layer)
+        sec = _icmp_timestamp(data, float(pkt.time))
+        if sec is not None:                     # ping이 데이터에 넣어둔 보낸 시각
+            stamp = _time.strftime("%b %d, %Y %H:%M:%S", _time.localtime(sec))
+            node.add(f"Timestamp from icmp data: {stamp}.000000000 {_time.strftime('%Z', _time.localtime(sec))}")
+            node.add(f"[Timestamp from icmp data (relative): {float(pkt.time) - sec:.9f} seconds]")
+            data = data[8:]
         if data:
-            node.add(f"Data ({len(data)} bytes)")
+            dnode = node.add(f"Data ({len(data)} bytes)", expanded=True)
+            dnode.add(f"Data: {data[:48].hex()}{'…' if len(data) > 48 else ''}")
+            dnode.add(f"[Length: {len(data)}]")
+
+        # 터미널 ping 맨 끝 통계랑 비교용 (우리 프로그램 전용)
+        if packets is not None and metas is not None and pkt.haslayer(IP):
+            src, dst = (pkt[IP].src, pkt[IP].dst) if layer.type == 8 else (pkt[IP].dst, pkt[IP].src)
+            st = ping_stats(packets, metas, src, dst, layer.id)
+            if st:
+                text = f"[ping 통계 ({src} → {dst}, id=0x{layer.id:04x}): {st['sent']} packets transmitted, " \
+                       f"{st['received']} received, {st['loss']}% packet loss"
+                if "avg" in st:
+                    text += f", rtt min/avg/max/mdev = {st['min']:.3f}/{st['avg']:.3f}/{st['max']:.3f}/{st['mdev']:.3f} ms"
+                node.add(text + "]")
 
     elif layer.type in (3, 11) and pkt.haslayer(IPerror):
         # 에러 안에 들어있는 "원래 보냈던 패킷" 보여주기 (traceroute 분석 핵심)
-        inner = pkt[IPerror]
-        inode = node.add(f"Internet Protocol Version 4, Src: {inner.src}, Dst: {inner.dst}", expanded=True)
-        inode.add(f"Time to Live: {inner.ttl}")
-        inode.add(f"Protocol: {IP_PROTOCOLS.get(inner.proto, 'Unknown')} ({inner.proto})")
+        node.add(f"Unused: {bytes(layer)[4:8].hex()}")
+        node.children.append(_ipv4_embedded(pkt[IPerror]))
         if pkt.haslayer(UDPerror):
-            u = pkt[UDPerror]
-            node.add(f"User Datagram Protocol, Src Port: {u.sport}, Dst Port: {u.dport}")
+            node.children.append(_udp_embedded(pkt[UDPerror]))
         elif pkt.haslayer(TCPerror):
             t = pkt[TCPerror]
-            node.add(f"Transmission Control Protocol, Src Port: {t.sport}, Dst Port: {t.dport}")
+            node.add(f"Transmission Control Protocol, Src Port: {t.sport}, Dst Port: {t.dport}, Seq: {t.seq}")
         elif pkt.haslayer(ICMPerror):
             e = pkt[ICMPerror]
-            node.add(f"Internet Control Message Protocol (Echo request), id={e.id}, seq={e.seq}")
+            node.add(f"Internet Control Message Protocol (Echo (ping) request), id=0x{e.id:04x}, seq={e.seq}/{swap16(e.seq)}")
 
         if meta and meta.request_in is not None:
             probe = packets[meta.request_in] if packets else None
@@ -491,7 +567,7 @@ def _generic(layer):
     return node
 
 
-def build_tree(pkt, no, meta=None, t0=None, packets=None):
+def build_tree(pkt, no, meta=None, t0=None, packets=None, metas=None):
     nodes = [_frame(pkt, no, meta, t0 if t0 is not None else pkt.time)]
 
     layer = pkt
@@ -516,7 +592,20 @@ def build_tree(pkt, no, meta=None, t0=None, packets=None):
         elif isinstance(layer, TCP):
             nodes.append(_tcp(layer, meta))
             data = payload_bytes(layer)         # TCP 위 내용은 바이트 보고 직접 판단
-            if parse_http(data):
+            if meta is not None and meta.http_partial:
+                node = Node(f"TCP segment data ({len(data)} bytes)")
+                node.add("[HTTP 메시지 중간 조각" + (f" -> {meta.reassembled_in + 1}번 패킷에서 이어 붙여짐]"
+                                                    if meta.reassembled_in is not None else "]"))
+                nodes.append(node)
+            elif meta is not None and meta.http_data:
+                if meta.http_parts and len(meta.http_parts) > 1:      # Wireshark처럼 이어 붙인 조각 목록
+                    parts = ", ".join(f"#{i + 1}({n})" for i, n in meta.http_parts)
+                    rnode = Node(f"[{len(meta.http_parts)} Reassembled TCP Segments ({len(meta.http_data)} bytes): {parts}]")
+                    for i, n in meta.http_parts:
+                        rnode.add(f"[Frame: {i + 1}, payload: {n} bytes]")
+                    nodes.append(rnode)
+                _http(meta.http_data, meta, nodes)
+            elif meta is None and parse_http(data):
                 _http(data, meta, nodes)
             elif data and data[0] in TLS_RECORDS and len(data) > 2 and data[1] == 3:
                 nodes.append(_tls(data))
@@ -531,7 +620,7 @@ def build_tree(pkt, no, meta=None, t0=None, packets=None):
                 nodes.append(_data(payload_bytes(layer)))
             break
         elif isinstance(layer, ICMP):
-            nodes.append(_icmp(pkt, layer, meta, packets))
+            nodes.append(_icmp(pkt, layer, meta, packets, metas))
             break
         elif layer.__class__.__name__.startswith("ICMPv6"):
             nodes.append(_icmpv6(icmpv6_layer(pkt), meta))

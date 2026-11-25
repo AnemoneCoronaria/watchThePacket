@@ -61,8 +61,10 @@ def phase_groups(rows):
     groups = []
     for r, row in enumerate(rows):
         phase = row["phase"]
-        if phase and groups and groups[-1][2] == phase and groups[-1][3] == row["stream"] and groups[-1][1] == r - 1:
+        # 연결(스트림)이 달라도 같은 단계면 한 덩어리로 묶음
+        # (브라우저처럼 연결 여러 개가 섞여 오면, 스트림별로 끊을 때 색 띠가 한 줄씩 조각나서 못 알아봄)
+        if phase and groups and groups[-1][2] == phase and groups[-1][1] == r - 1:
             groups[-1][1] = r
         elif phase:
-            groups.append([r, r, phase, row["stream"]])
-    return [(g[0], g[1], g[2]) for g in groups]
+            groups.append([r, r, phase])
+    return [tuple(g) for g in groups]

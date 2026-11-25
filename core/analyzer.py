@@ -70,7 +70,7 @@ class _TcpStream:
         self.closed = False         # FIN이나 RST가 오갔는지
         self.wscale = [None, None]  # 방향별 창 크기 배율(SYN에 붙은 WS 옵션). 양쪽 다 있어야 씀
         self.established = False
-        self.fin_seen = False
+        self.fin_end = [None, None]     # 방향별 FIN 다음 Seq (원래 값). 상대가 이걸 Ack 하면 "FIN 받았어" 라는 뜻
         self.teardown_step = 0
         self.http_requests = []     # 아직 응답 못 받은 HTTP 요청 번호들
         self.http_buf = [None, None]    # 방향별 이어 붙이는 중인 HTTP {"data", "parts", "next"}
@@ -211,24 +211,32 @@ class Analyzer:
             meta.win_calc = tcp.window
 
         # 연결 단계 정하기
+        #   FIN 뒤에 오는 빈 ACK라도 "상대 FIN을 받았다"는 ACK만 연결 해제로 봄
+        #   (먼저 FIN 보낸 쪽이 그 뒤에 오는 데이터를 받고 보내는 ACK는 그냥 데이터 송수신. half-close)
+        acks_fin = "ACK" in names and stream.fin_end[1 - d] is not None and tcp.ack == stream.fin_end[1 - d]
+        with_data = f" + 데이터 {seg_len}바이트" if seg_len else ""
         if "SYN" in names and "ACK" not in names:
             meta.phase, meta.phase_label = "handshake", "연결 설정 (3-way handshake) 1/3: SYN"
         elif "SYN" in names:
             stream.synack_seen = True
             meta.phase, meta.phase_label = "handshake", "연결 설정 (3-way handshake) 2/3: SYN, ACK"
-        elif stream.synack_seen and not stream.established and names == {"ACK"} and seg_len == 0 and d == 0:
+        elif stream.synack_seen and not stream.established and names <= {"ACK", "PSH"} and "ACK" in names and d == 0:
+            # 3번째 ACK. 여기에 바로 데이터를 실어 보내는 경우도 있음
             stream.established = True
             if stream.syn_time is not None:
                 stream.first_rtt = meta.time - stream.syn_time
-            meta.phase, meta.phase_label = "handshake", "연결 설정 (3-way handshake) 3/3: ACK"
+            meta.phase = "handshake"
+            meta.phase_label = f"연결 설정 (3-way handshake) 3/3: {', '.join(tcp_flag_names(tcp))}{with_data}"
         elif "RST" in names:
             stream.closed = True
             meta.phase, meta.phase_label = "teardown", "연결 강제 종료 (RST)"
-        elif "FIN" in names or (stream.fin_seen and seg_len == 0):
-            stream.fin_seen = True
+        elif "FIN" in names or (acks_fin and seg_len == 0):
+            if "FIN" in names:
+                stream.fin_end[d] = (tcp.seq + seg_len + 1) % 2 ** 32
             stream.closed = True
             stream.teardown_step += 1
-            meta.phase, meta.phase_label = "teardown", f"연결 해제 {stream.teardown_step}단계: {', '.join(tcp_flag_names(tcp))}"
+            meta.phase = "teardown"
+            meta.phase_label = f"연결 해제 {stream.teardown_step}단계: {', '.join(tcp_flag_names(tcp))}{with_data}"
         else:
             stream.established = True
             meta.phase, meta.phase_label = "data", "데이터 송수신"

@@ -11,6 +11,7 @@ from core.flow import build_flow_rows, phase_groups, MAX_ROWS
 
 PHASE_COLORS = {"handshake": "#ffd8c2", "data": "#dbeafe", "teardown": "#eadcff"}
 PHASE_NAMES = {"handshake": "연결 설정\n(3-way\nhandshake)", "data": "데이터\n송수신", "teardown": "연결 해제"}
+SHORT_NAMES = {"handshake": "연결 설정", "data": "데이터", "teardown": "연결 해제"}   # 띠가 한 줄짜리일 때
 
 
 class FlowCanvas(QWidget):
@@ -76,7 +77,11 @@ class FlowCanvas(QWidget):
                 rect = QRectF(self.TIME_W, top, self.comment_x() - self.TIME_W, (last - first + 1) * self.ROW_H)
                 p.fillRect(rect, QColor(PHASE_COLORS[phase]))
                 p.setPen(QColor("#9a3412") if phase == "handshake" else QColor("#1e3a8a") if phase == "data" else QColor("#5b21b6"))
-                p.drawText(QRectF(self.TIME_W + 2, top, self.PHASE_W - 4, rect.height()), Qt.AlignCenter, PHASE_NAMES[phase])
+                # 긴 이름이 안 들어갈 만큼 띠가 낮으면 한 줄짜리 짧은 이름 (글자 겹침 방지)
+                name = PHASE_NAMES[phase]
+                if QFontMetrics(self.font_small).lineSpacing() * (name.count("\n") + 1) > rect.height() - 4:
+                    name = SHORT_NAMES[phase]
+                p.drawText(QRectF(self.TIME_W + 2, top, self.PHASE_W - 4, rect.height()), Qt.AlignCenter, name)
 
         # 선택한 줄
         if self.selected is not None:

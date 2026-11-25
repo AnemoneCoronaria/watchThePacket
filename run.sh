@@ -13,6 +13,14 @@ if [ ! -x "$PY" ]; then
     exit 1
 fi
 
+# 화면 파일(ui_main.py, res_rc.py)이 없거나 main.ui / res.qrc 가 더 새 거면 다시 만들기 (sudo 전에, 내 권한으로)
+if [ ! -f ui_main.py ] || [ main.ui -nt ui_main.py ]; then
+    .venv/bin/pyside6-uic main.ui -o ui_main.py || exit 1
+fi
+if [ ! -f res_rc.py ] || [ res.qrc -nt res_rc.py ] || [ -n "$(find icons -newer res_rc.py 2>/dev/null)" ]; then
+    .venv/bin/pyside6-rcc res.qrc -o res_rc.py || exit 1
+fi
+
 if [ "$(uname)" = "Linux" ]; then
     if [ -n "$DISPLAY" ] && command -v xhost >/dev/null 2>&1; then
         xhost +SI:localuser:root >/dev/null 2>&1

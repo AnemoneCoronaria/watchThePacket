@@ -2,6 +2,10 @@
 .venv/
 .venv-*/
 
+# 빌드 결과물: install.sh / run.sh 가 main.ui, res.qrc 에서 만듦 (과제 제출 zip에서도 빼야 함)
+ui_main.py
+res_rc.py
+
 # 파이썬 캐시
 __pycache__/
 *.pyc

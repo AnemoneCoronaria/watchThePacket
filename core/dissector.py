@@ -1,3 +1,4 @@
+import struct
 import time as _time
 
 from scapy.all import Ether, Dot3, IP, IPv6, TCP, UDP, ICMP, ARP, DNS, Raw, Padding, NoPayload
@@ -431,11 +432,20 @@ def _icmp_checksum_ok(layer):
 
 
 def _icmp_timestamp(data, frame_time):
-    # 리눅스/맥 ping은 데이터 맨 앞 8바이트에 보낸 시각(초)을 넣음. 패킷 시각이랑 하루 안쪽이면 그걸로 봄
-    if len(data) >= 8:
-        sec = int.from_bytes(data[:8], "little")
-        if abs(frame_time - sec) < 86400:
-            return sec
+    # ping은 데이터 맨 앞에 "보낸 시각"을 넣어둠. 근데 OS마다 넣는 모양이 달라서 Wireshark처럼 차례로 맞춰봄
+    #   1. 초 4바이트 + 마이크로초 4바이트, 빅엔디언      <- 맥 ping
+    #   2. 초 8바이트 + 마이크로초 8바이트, 리틀엔디언    <- 64비트 리눅스 ping (우분투)
+    #   3. 초 4바이트 + 마이크로초 4바이트, 리틀엔디언
+    # 패킷 잡힌 시각이랑 하루 안쪽이고 마이크로초가 100만 미만이면 그거라고 봄
+    # 돌려주는 값: (초, 마이크로초, 시각이 차지한 바이트 수) / 아니면 None
+    tries = [(">I", 4), ("<Q", 8), ("<I", 4)]
+    for fmt, size in tries:
+        if len(data) < size * 2:
+            continue
+        sec = struct.unpack(fmt, data[:size])[0]
+        usec = struct.unpack(fmt, data[size:size * 2])[0]
+        if abs(sec - int(frame_time)) < 86400 and usec < 1_000_000:
+            return sec, usec, size * 2
     return None
 
 
@@ -478,12 +488,15 @@ def _icmp(pkt, layer, meta, packets, metas):
                 node.add(f"[Response time: {_ms(meta.rtt)}]")
 
         data = payload_bytes(layer)
-        sec = _icmp_timestamp(data, float(pkt.time))
-        if sec is not None:                     # ping이 데이터에 넣어둔 보낸 시각
-            stamp = _time.strftime("%b %d, %Y %H:%M:%S", _time.localtime(sec))
-            node.add(f"Timestamp from icmp data: {stamp}.000000000 {_time.strftime('%Z', _time.localtime(sec))}")
-            node.add(f"[Timestamp from icmp data (relative): {float(pkt.time) - sec:.9f} seconds]")
-            data = data[8:]
+        found = _icmp_timestamp(data, float(pkt.time))
+        if found is not None:                   # ping이 데이터에 넣어둔 보낸 시각
+            sec, usec, used = found
+            local = _time.localtime(sec)
+            stamp = _time.strftime("%b %d, %Y %H:%M:%S", local)
+            node.add(f"Timestamp from icmp data: {stamp}.{usec:06d}000 {_time.strftime('%Z', local)}")
+            rel = round(float(pkt.time) - sec - usec / 1e6, 6)     # 캡처 시각이 마이크로초까지라 6자리에서 반올림
+            node.add(f"[Timestamp from icmp data (relative): {rel:.9f} seconds]")
+            data = data[used:]                  # 시각 뒤부터가 진짜 Data (리눅스면 16바이트, 맥이면 8바이트 뒤)
         if data:
             dnode = node.add(f"Data ({len(data)} bytes)", expanded=True)
             dnode.add(f"Data: {data[:48].hex()}{'…' if len(data) > 48 else ''}")

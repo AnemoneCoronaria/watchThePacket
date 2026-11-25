@@ -12,7 +12,7 @@
 
 비교하는 것
     1. 패킷마다 Protocol 칸, Info 칸
-    2. ping(ICMP): id, seq(BE/LE), 짝꿍 패킷 번호, 응답 시간, 체크섬 검증
+    2. ping(ICMP): id, seq(BE/LE), 짝꿍 패킷 번호, 응답 시간, 체크섬 검증, 데이터 속 보낸 시각, Data 길이
     3. DNS: Transaction ID, 짝꿍 패킷 번호, 응답 시간
     4. TCP: 스트림 번호, 상대 Seq/Ack, 창 크기(배율 계산), 데이터 길이
     5. 표시 필터: 같은 필터에 걸리는 패킷 번호가 같은지
@@ -128,19 +128,25 @@ def main():
 
     # ---- 2. ping ----
     icmp = tshark_fields(tshark, args.pcap, ["icmp.ident", "icmp.seq", "icmp.seq_le", "icmp.resp_in", "icmp.resp_to",
-                                             "icmp.resptime", "icmp.checksum.status"], "icmp.type==0 || icmp.type==8")
+                                             "icmp.resptime", "icmp.checksum.status", "icmp.data_time_relative", "data.len"],
+                         "icmp.type==0 || icmp.type==8")
     ok, total, diff = 0, 0, []
     for n, w in icmp.items():
         pkt, meta = packets[n - 1], metas[n - 1]
         if not pkt.haslayer(ICMP):
             continue
         layer = pkt[ICMP]
-        from core.dissector import _icmp_checksum_ok      # 상세 트리에서 쓰는 것과 같은 함수
+        from core.dissector import _icmp_checksum_ok, _icmp_timestamp      # 상세 트리에서 쓰는 것과 같은 함수
+        data = payload_bytes(layer)
+        found = _icmp_timestamp(data, float(pkt.time))
+        rel = f"{round(float(pkt.time) - found[0] - found[1] / 1e6, 6):.9f}" if found else ""
+        rest = len(data) - (found[2] if found else 0)
         mine = {
             "icmp.ident": str(layer.id), "icmp.seq": str(layer.seq), "icmp.seq_le": str(swap16(layer.seq)),
             "icmp.resp_in": str(meta.response_in + 1) if meta.response_in is not None and layer.type == 8 else "",
             "icmp.resp_to": str(meta.request_in + 1) if meta.request_in is not None and layer.type == 0 else "",
             "icmp.checksum.status": "1" if _icmp_checksum_ok(layer) else "0",
+            "icmp.data_time_relative": rel, "data.len": str(rest) if rest else "",
         }
         total += 1
         bad = [f"{k}: 우리 {mine[k]!r} / Wireshark {w[k]!r}" for k in mine if mine[k] != w[k]]
@@ -150,7 +156,7 @@ def main():
             diff.append(f"#{n}: " + ", ".join(bad))
         else:
             ok += 1
-    report.append(("ping 필드 (id, seq, 짝꿍, 응답 시간, 체크섬)", ok, total, diff))
+    report.append(("ping 필드 (id, seq, 짝꿍, 응답 시간, 체크섬, 보낸 시각, Data 길이)", ok, total, diff))
 
     # ---- 3. DNS ----
     dns = tshark_fields(tshark, args.pcap, ["dns.id", "dns.response_in", "dns.response_to", "dns.time"], "dns")

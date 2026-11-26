@@ -118,9 +118,21 @@ class MainWindow(QWidget):
         self.ui.inputFilter.setPlaceholderText("표시 필터 (예: tcp, ip.addr == 1.1.1.1, port 80 and not udp)  Enter로 적용")
         self.ui.inputFilter.setClearButtonEnabled(True)
 
-        # 위아래 비율 (패킷 목록 : 상세+hex = 3 : 2)
-        self.ui.verticalLayout_2.setStretch(0, 3)
-        self.ui.verticalLayout_2.setStretch(1, 2)
+        # 경계선을 마우스로 끌어서 크기 조절 (Wireshark처럼)
+        #   mainSplitter  : 패킷 목록 / 아래쪽(상세+hex) 사이 -> 위아래로 끌기
+        #   bottomSplitter: 상세 트리 / hex 사이 -> 좌우로 끌기
+        # 처음 비율은 패킷 목록 : 아래쪽 = 3 : 2, 상세 : hex = 1 : 1
+        # 창 크기를 바꾸면 이 비율대로 같이 늘고 줄어듦
+        self.ui.mainSplitter.setStretchFactor(0, 3)
+        self.ui.mainSplitter.setStretchFactor(1, 2)
+        self.ui.mainSplitter.setSizes([600, 400])
+        self.ui.bottomSplitter.setSizes([500, 500])
+        # 경계선이 어딘지 보이게 얇은 선 + 마우스 올리면 파랗게 (커서도 ↕ / ↔ 로 바뀜)
+        for split in (self.ui.mainSplitter, self.ui.bottomSplitter):
+            split.setStyleSheet("QSplitter::handle { background: palette(midlight); }"
+                                "QSplitter::handle:vertical { margin: 2px 0px; }"
+                                "QSplitter::handle:horizontal { margin: 0px 2px; }"
+                                "QSplitter::handle:hover { background: palette(highlight); }")
 
         # 인터페이스 목록 채우기 (맨 위가 기본 인터페이스)
         for item in list_interfaces():

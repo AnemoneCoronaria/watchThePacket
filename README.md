@@ -344,7 +344,8 @@ watchThePacket/
 ├── docs/images/          # README 스크린샷 (ubuntu/, macos/)
 ├── tools/
 │   ├── verify_with_wireshark.py  # Wireshark(tshark)와 비교 검증
-│   └── make_submission_zip.sh    # 과제 제출용 zip
+│   ├── make_submission_zip.sh    # 과제 제출용 zip
+│   └── try_ubuntu_gui.sh         # 맥에서 Ubuntu 데스크톱 띄워 GUI 시험 (Docker + VNC)
 ├── gui/
 │   ├── main_window.py    # 창: 버튼, 표, 트리, hex 연결
 │   ├── flow_graph.py     # 흐름도 창
@@ -399,6 +400,21 @@ xhost +SI:localuser:root && sudo -E .venv/bin/python main.py
 ```
 
 `ui_main.py`, `res_rc.py`는 빌드 결과물이라 git에 올리지 않는다 (과제 설명서: 빌드 중 생기는 파일은 제출 zip에서 제외).
+
+### 맥에서 Ubuntu GUI로 시험 (OrbStack / Docker Desktop)
+
+VirtualBox 없이 맥에서 Ubuntu 데스크톱을 띄워 마우스로 직접 시험한다. Docker 컨테이너 안에 데스크톱(Xfce)과 VNC 서버를 띄우고, 맥 기본 **화면 공유** 앱으로 접속한다.
+
+```bash
+tools/try_ubuntu_gui.sh          # Ubuntu 22.04 (24.04는 뒤에 24.04)
+```
+
+1. Finder → 이동 → 서버에 연결(⌘K) → `vnc://localhost:5901`, 비밀번호 `watch123`
+2. 우분투 화면 아래쪽 독의 터미널에서 `cd ~/watchThePacket && ./install.sh && ./run.sh`
+3. 다 쓰면 `tools/try_ubuntu_gui.sh stop`
+
+- 코드를 고친 뒤 스크립트를 다시 실행하면 새 코드로 복사된다
+- 화면 관리자(Xfce)와 네트워크 경로(OrbStack 경유)가 실제 VirtualBox와 달라서, 최종 확인과 발표 영상은 실습 환경에서 하는 게 안전하다
 
 ### 창 없이 로직만 테스트
 
